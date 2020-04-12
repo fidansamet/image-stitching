@@ -3,33 +3,38 @@ import cv2
 from matplotlib import pyplot as plt
 
 dataset_name = "HW2_Dataset"
-dataset_contents = os.listdir(dataset_name)
+subsets = {}
+
+
+def get_subset_names():
+    root, directories, files = next(os.walk(dataset_name))
+    for directory in sorted(directories):
+        subsets[directory] = sorted(os.listdir(dataset_name + "/" + directory))
 
 
 def main():
-    for content in dataset_contents:
-        # If it is a directory get images
-        if os.path.isdir(dataset_name + "/" + content):
-            print(content)
-            subset_images = os.listdir(dataset_name + "/" + content)
-            for image_name in subset_images:
-                print(image_name)
-                image = cv2.imread(dataset_name + "/" + content + '/' + image_name)
+    for subset_name, subset_images_names in subsets.items():
+        for image_name in subset_images_names:
+            print(image_name)
 
-                # Initiate STAR detector
-                orb = cv2.ORB_create()
+            image = cv2.imread(dataset_name + "/" + subset_name + '/' + image_name)
 
-                # find the keypoints with ORB
-                kp = orb.detect(image, None)
+            # Initiate STAR detector
+            orb = cv2.ORB_create()
 
-                # compute the descriptors with ORB
-                kp, des = orb.compute(image, kp)
+            # find the keypoints with ORB
+            key_points = orb.detect(image, None)
 
-                # draw only keypoints location,not size and orientation
-                img2 = image
-                cv2.drawKeypoints(image, kp, img2, color=(0, 255, 0), flags=0)
-                plt.imshow(img2), plt.show()
+            # compute the descriptors with ORB
+            key_points, des = orb.compute(image, key_points)
+
+            # draw only keypoints location,not size and orientation
+            result_image = cv2.drawKeypoints(image, key_points, None, color=(0, 255, 0), flags=0)
+
+            plt.imshow(result_image)
+            plt.show()
 
 
 if __name__ == '__main__':
+    get_subset_names()
     main()
