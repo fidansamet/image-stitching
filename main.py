@@ -10,55 +10,6 @@ orb = cv2.ORB_create()  # Initiate STAR detector
 plt.style.use("ggplot")
 
 
-def drawMatches(img1, kp1, img2, kp2, matches, inliers = None):
-    # Create a new output image that concatenates the two images together
-    rows1 = img1.shape[0]
-    cols1 = img1.shape[1]
-    rows2 = img2.shape[0]
-    cols2 = img2.shape[1]
-
-    out = np.zeros((max([rows1,rows2]),cols1+cols2,3), dtype='uint8')
-
-    # Place the first image to the left
-    out[:rows1,:cols1,:] = np.dstack([img1, img1, img1])
-
-    # Place the next image to the right of it
-    out[:rows2,cols1:cols1+cols2,:] = np.dstack([img2, img2, img2])
-
-    # For each pair of points we have between both images
-    # draw circles, then connect a line between them
-    for mat in matches:
-
-        # Get the matching keypoints for each of the images
-        img1_idx = mat.queryIdx
-        img2_idx = mat.trainIdx
-
-        # x - columns, y - rows
-        (x1,y1) = kp1[img1_idx].pt
-        (x2,y2) = kp2[img2_idx].pt
-
-        inlier = False
-
-        if inliers is not None:
-            for i in inliers:
-                if i.item(0) == x1 and i.item(1) == y1 and i.item(2) == x2 and i.item(3) == y2:
-                    inlier = True
-
-        # Draw a small circle at both co-ordinates
-        cv2.circle(out, (int(x1),int(y1)), 4, (255, 0, 0), 1)
-        cv2.circle(out, (int(x2)+cols1,int(y2)), 4, (255, 0, 0), 1)
-
-        # Draw a line in between the two points, draw inliers if we have them
-        if inliers is not None and inlier:
-            cv2.line(out, (int(x1),int(y1)), (int(x2)+cols1,int(y2)), (0, 255, 0), 1)
-        elif inliers is not None:
-            cv2.line(out, (int(x1),int(y1)), (int(x2)+cols1,int(y2)), (0, 0, 255), 1)
-
-        if inliers is None:
-            cv2.line(out, (int(x1),int(y1)), (int(x2)+cols1,int(y2)), (255, 0, 0), 1)
-
-    return out
-
 def get_subset_names():
     root, directories, files = next(os.walk(dataset_name))
     for directory in sorted(directories):
@@ -69,6 +20,7 @@ def main():
     for subset_name, subset_images_names in subsets.items():
         feature_points_plot = None
         feature_matching_plot = None
+        stitched = cv2.imread(dataset_name + "/" + subset_name + '/' + subset_images_names[0])
         for i in range(0, len(subset_images_names) - 1):
             print(subset_images_names[i])
 
@@ -76,11 +28,58 @@ def main():
             cur_image = cv2.imread(dataset_name + "/" + subset_name + '/' + subset_images_names[i])     # TODO gray
             next_image = cv2.imread(dataset_name + "/" + subset_name + '/' + subset_images_names[i + 1])
 
-            # Feature extraction and feature matching
-            feature_points_plot, feature_matching_plot = feature_extraction_and_matching(cur_image, next_image, feature_points_plot, feature_matching_plot)
+            img_ = cv2.imread(dataset_name + "/" + subset_name + '/' + subset_images_names[i + 1])
+            img1 = cv2.cvtColor(img_, cv2.COLOR_BGR2GRAY)
+            img = cv2.imread(dataset_name + "/" + subset_name + '/' + subset_images_names[i])
+            img2 = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-            # Find homography
-            # find_homography()
+            kp1, des1 = orb.detectAndCompute(img1, None)
+            kp2, des2 = orb.detectAndCompute(img2, None)
+
+            # bf = cv2.BFMatcher()
+            # matches = bf.knnMatch(des1, des2, k=2)
+
+            index_params = dict(algorithm=6,
+                                table_number=6,
+                                key_size=12,
+                                multi_probe_level=1)
+            search_params = {}
+            flann = cv2.FlannBasedMatcher(index_params, search_params)
+            bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+            matches = bf.knnMatch(des1, des2, k=2)
+
+            # Apply ratio test
+            good = []
+            for m in matches:
+                if m[0].distance < 0.5 * m[1].distance:
+                    good.append(m)
+            matches = np.asarray(good)
+
+            if len(matches[:, 0]) >= 4:
+                src = np.float32([kp1[m.queryIdx].pt for m in matches[:, 0]]).reshape(-1, 1, 2)
+                dst = np.float32([kp2[m.trainIdx].pt for m in matches[:, 0]]).reshape(-1, 1, 2)
+                correspondenceList = []
+                if matches is not None or matches is not []:
+                    for match in matches[:, 0]:
+                        (x1, y1) = kp1[match.queryIdx].pt
+                        (x2, y2) = kp2[match.trainIdx].pt
+                        correspondenceList.append([x1, y1, x2, y2])
+
+                print(correspondenceList)
+                corrs = np.matrix(correspondenceList)
+
+                # run ransac algorithm
+                H, inliers = ransac(corrs, 5.0)
+                #H, masked = cv2.findHomography(src, dst, cv2.RANSAC, 5.0)
+
+                dst = cv2.warpPerspective(img_, H, (img.shape[1] + img_.shape[1], img.shape[0]))
+                dst[0:img.shape[0], 0:img.shape[1]] = img
+                plt.imshow(dst)
+                plt.show()
+                stitched = dst
+
+            else:
+                print("Can’t find enough keypoints.")
 
         #result_image = np.concatenate((feature_points_plot, cv2.cvtColor(feature_matching_plot, cv2.COLOR_BGR2RGB)), axis=0)
         # plt.imshow(feature_points_plot)
@@ -201,19 +200,15 @@ def feature_extraction_and_matching(cur_image, next_image, feature_points_plot, 
     print("Final homography: ", finalH)
     print("Final inliers count: ", len(inliers))
 
-    matchImg = drawMatches(cur_image, cur_key_points, next_image, next_key_points, matches, inliers)
-    plt.imshow(matchImg)
-    plt.title(''), plt.xticks([]), plt.yticks([])
-    plt.show()
-
     return feature_points_plot, feature_matching_plot
 
 
 def ransac(corr, thresh):
-    maxInliers = []
-    finalH = None
+    max_inliers = []
+    best_H = None
+
     for i in range(1000):
-        #find 4 random points to calculate a homography
+        # Find 4 random points to calculate a homography
         corr1 = corr[random.randrange(0, len(corr))]
         corr2 = corr[random.randrange(0, len(corr))]
         randomFour = np.vstack((corr1, corr2))
@@ -223,23 +218,23 @@ def ransac(corr, thresh):
         randomFour = np.vstack((randomFour, corr4))
 
         #call the homography function on those points
-        h = find_homography(randomFour)
+        H = find_homography(randomFour)
         inliers = []
 
         for i in range(len(corr)):
-            d = geometricDistance(corr[i], h)
+            d = geometricDistance(corr[i], H)
             if d < 5:
                 inliers.append(corr[i])
 
-        if len(inliers) > len(maxInliers):
-            maxInliers = inliers
-            finalH = h
-        print("Corr size: ", len(corr), " NumInliers: ", len(inliers), "Max inliers: ", len(maxInliers))
+        if len(inliers) > len(max_inliers):
+            max_inliers = inliers
+            best_H = H
 
-        if len(maxInliers) > (len(corr)*thresh):
+        print("Corr size: ", len(corr), " NumInliers: ", len(inliers), "Max inliers: ", len(max_inliers))
+
+        if len(max_inliers) > (len(corr)*thresh):
             break
-    return finalH, maxInliers
-
+    return best_H, max_inliers
 
 
 def find_homography(correspondences):
@@ -262,17 +257,14 @@ def find_homography(correspondences):
     u, s, v = np.linalg.svd(matrixA)
 
     # reshape the min singular value into a 3 by 3 matrix
-    h = np.reshape(v[8], (3, 3))
+    H = np.reshape(v[8], (3, 3))
 
     # normalize and now we have h
-    h = (1 / h.item(8)) * h
-    return h
-
-    #
-    # Calculate the geometric distance between estimated points and original points
-    #
+    H = (1 / H.item(8)) * H
+    return H
 
 
+# Calculate the geometric distance between estimated points and original points
 def geometricDistance(correspondence, h):
     p1 = np.transpose(np.matrix([correspondence[0].item(0), correspondence[0].item(1), 1]))
     estimatep2 = np.dot(h, p1)
