@@ -6,7 +6,7 @@ import random
 
 dataset_name = "HW2_Dataset"
 subsets = {}
-orb = cv2.ORB_create()  # Initiate STAR detector
+orb = cv2.ORB_create()  # Initiate ORB detector
 plt.style.use("ggplot")
 
 
@@ -25,63 +25,18 @@ def main():
             print(subset_images_names[i])
 
             # Read current and next images
-            cur_image = cv2.imread(dataset_name + "/" + subset_name + '/' + subset_images_names[i])     # TODO gray
             next_image = cv2.imread(dataset_name + "/" + subset_name + '/' + subset_images_names[i + 1])
+            next_image_gray = cv2.cvtColor(next_image, cv2.COLOR_BGR2GRAY)
+            cur_image = cv2.imread(dataset_name + "/" + subset_name + '/' + subset_images_names[i])
+            cur_image_gray = cv2.cvtColor(cur_image, cv2.COLOR_BGR2GRAY)
 
-            img_ = cv2.imread(dataset_name + "/" + subset_name + '/' + subset_images_names[i + 1])
-            img1 = cv2.cvtColor(img_, cv2.COLOR_BGR2GRAY)
-            img = cv2.imread(dataset_name + "/" + subset_name + '/' + subset_images_names[i])
-            img2 = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            # Read ground truth panorama image
+            ground_truth = cv2.imread(dataset_name + "/" + subset_name + '_gt.png')
 
-            kp1, des1 = orb.detectAndCompute(img1, None)
-            kp2, des2 = orb.detectAndCompute(img2, None)
+            # Feature extraction, feature matching, Homography finding, merging by transformation
+            stitch_images(cur_image_gray, next_image_gray, feature_points_plot, feature_matching_plot)
 
-            # bf = cv2.BFMatcher()
-            # matches = bf.knnMatch(des1, des2, k=2)
-
-            index_params = dict(algorithm=6,
-                                table_number=6,
-                                key_size=12,
-                                multi_probe_level=1)
-            search_params = {}
-            flann = cv2.FlannBasedMatcher(index_params, search_params)
-            bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
-            matches = bf.knnMatch(des1, des2, k=2)
-
-            # Apply ratio test
-            good = []
-            for m in matches:
-                if m[0].distance < 0.5 * m[1].distance:
-                    good.append(m)
-            matches = np.asarray(good)
-
-            if len(matches[:, 0]) >= 4:
-                src = np.float32([kp1[m.queryIdx].pt for m in matches[:, 0]]).reshape(-1, 1, 2)
-                dst = np.float32([kp2[m.trainIdx].pt for m in matches[:, 0]]).reshape(-1, 1, 2)
-                correspondenceList = []
-                if matches is not None or matches is not []:
-                    for match in matches[:, 0]:
-                        (x1, y1) = kp1[match.queryIdx].pt
-                        (x2, y2) = kp2[match.trainIdx].pt
-                        correspondenceList.append([x1, y1, x2, y2])
-
-                print(correspondenceList)
-                corrs = np.matrix(correspondenceList)
-
-                # run ransac algorithm
-                H, inliers = ransac(corrs, 5.0)
-                #H, masked = cv2.findHomography(src, dst, cv2.RANSAC, 5.0)
-
-                dst = cv2.warpPerspective(img_, H, (img.shape[1] + img_.shape[1], img.shape[0]))
-                dst[0:img.shape[0], 0:img.shape[1]] = img
-                plt.imshow(dst)
-                plt.show()
-                stitched = dst
-
-            else:
-                print("Can’t find enough keypoints.")
-
-        #result_image = np.concatenate((feature_points_plot, cv2.cvtColor(feature_matching_plot, cv2.COLOR_BGR2RGB)), axis=0)
+        # result_image = np.concatenate((feature_points_plot, cv2.cvtColor(feature_matching_plot, cv2.COLOR_BGR2RGB)), axis=0)
         # plt.imshow(feature_points_plot)
         # plt.title(''), plt.xticks([]), plt.yticks([])
         # plt.show()
@@ -106,51 +61,31 @@ def feature_extraction(img):
     return key_points, desc
 
 
-def feature_matching(cur_image, cur_key_points, cur_desc, next_image, next_key_points, next_desc):
-    index_params = dict(algorithm=6,
-                        table_number=6,
-                        key_size=12,
-                        multi_probe_level=1)
-    search_params = {}
+def feature_matching(cur_image, cur_feature_pts, cur_descs, next_image, next_feature_pts, next_descs):
     # each element needs to have 2-nearest neighbors, each list of descriptors needs to have more than 2 elements each
     nearest_neighbor_num = 2
 
     # Matchers
-    flann = cv2.FlannBasedMatcher(index_params, search_params)
     bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
 
-    if (cur_desc is not None and len(cur_desc) > nearest_neighbor_num and
-            next_desc is not None and len(next_desc) > nearest_neighbor_num):
+    if (cur_descs is not None and len(cur_descs) > nearest_neighbor_num and
+            next_descs is not None and len(next_descs) > nearest_neighbor_num):
 
         # Get knn detector
-        matches = bf.knnMatch(cur_desc, next_desc, k=nearest_neighbor_num)
+        matches = bf.knnMatch(next_descs, cur_descs, k=nearest_neighbor_num)
 
-        # Need to draw only good matches, so create a mask TODO use np
-        matches_mask = [[0, 0] for i in range(len(matches))]
-
-        # ratio test as per Lowe's paper
-        for i, (m, n) in enumerate(matches):
-            if m.distance < 0.7 * n.distance:
-                matches_mask[i] = [1, 0]
-
-        draw_params = dict(matchColor=(0, 255, 0),
-                           singlePointColor=(255, 0, 0),
-                           matchesMask=matches_mask,
-                           flags=0)
-
-        macthed = cv2.drawMatchesKnn(cur_image, cur_key_points, next_image, next_key_points, matches, None,
-                                     **draw_params)
-        plt.imshow(macthed)
-        plt.title(''), plt.xticks([]), plt.yticks([])
-        plt.show()
-
-        # As per Lowe's ratio test to filter good matches
-        good_matches = []
+        # Apply ratio test
+        good = []
         for m, n in matches:
             if m.distance < 0.75 * n.distance:
-                good_matches.append(m)
+                good.append([m])
 
+        matches = np.asarray(good)
 
+        # cv2.drawMatchesKnn expects list of lists as matches.
+        img3 = cv2.drawMatchesKnn(cur_image, cur_feature_pts, next_image, next_feature_pts, good, None, flags=2)
+        plt.imshow(img3)
+        plt.show()
 
         # if feature_matching_plot is None:
         #     feature_matching_plot = macthed
@@ -158,11 +93,7 @@ def feature_matching(cur_image, cur_key_points, cur_desc, next_image, next_key_p
         #     feature_matching_plot = np.concatenate((feature_matching_plot, cv2.cvtColor(macthed, cv2.COLOR_BGR2RGB)),
         #                                            axis=1)
 
-        # matcher = cv2.BFMatcher(cv2.NORM_L2, True)
-        # matches = matcher.match(cur_desc, next_desc)
-        # matchImg = cv2.drawMatches(cur_image, cur_key_points, next_image, next_key_points, matches, None, flags=2)
-        # cv2.imwrite('Matches.png', matchImg)
-        return good_matches
+        return matches
     else:
         plt.imshow(next_image)
         plt.title(''), plt.xticks([]), plt.yticks([])
@@ -175,30 +106,41 @@ def feature_matching(cur_image, cur_key_points, cur_desc, next_image, next_key_p
         return None
 
 
-
-def feature_extraction_and_matching(cur_image, next_image, feature_points_plot, feature_matching_plot):
-
-    cur_key_points, cur_desc = feature_extraction(cur_image)
-    next_key_points, next_desc = feature_extraction(next_image)
+def stitch_images(cur_image, next_image, feature_points_plot, feature_matching_plot):
+    # Feature extraction
+    cur_feature_pts, cur_descs = feature_extraction(cur_image)
+    next_feature_pts, next_descs = feature_extraction(next_image)
 
     # Feature matching
-    matches = feature_matching(cur_image, cur_key_points, cur_desc, next_image, next_key_points, next_desc)
+    matches = feature_matching(cur_image, cur_feature_pts, cur_descs, next_image, next_feature_pts, next_descs)
 
-    correspondenceList = []
+    # Find Homography
+    if len(matches[:, 0]) >= 4:
 
-    if matches is not None or matches is not []:
-        for match in matches:
-            (x1, y1) = cur_key_points[match.queryIdx].pt
-            (x2, y2) = next_key_points[match.trainIdx].pt
-            correspondenceList.append([x1, y1, x2, y2])
+        correspondenceList = []
 
-    print(correspondenceList)
-    corrs = np.matrix(correspondenceList)
+        if matches is not None or matches is not []:
+            for match in matches[:, 0]:
+                (x1, y1) = next_feature_pts[match.queryIdx].pt
+                (x2, y2) = cur_feature_pts[match.trainIdx].pt
+                correspondenceList.append([x1, y1, x2, y2])
 
-    # run ransac algorithm
-    finalH, inliers = ransac(corrs, 0.60)      # TODO
-    print("Final homography: ", finalH)
-    print("Final inliers count: ", len(inliers))
+        print(correspondenceList)
+        corrs = np.matrix(correspondenceList)
+
+        # run ransac algorithm
+        H, inliers = ransac(corrs, 5.0)
+        # H, masked = cv2.findHomography(src, dst, cv2.RANSAC, 5.0)
+        print("Final homography: ", H)
+        print("Final inliers count: ", len(inliers))
+
+        dst = cv2.warpPerspective(next_image, H, (cur_image.shape[1] + next_image.shape[1], cur_image.shape[0]))
+        dst[0:cur_image.shape[0], 0:cur_image.shape[1]] = cur_image
+        plt.imshow(dst)
+        plt.show()
+        stitched = dst
+    else:
+        print("Can’t find enough keypoints.")
 
     return feature_points_plot, feature_matching_plot
 
@@ -208,7 +150,7 @@ def ransac(corr, thresh):
     best_H = None
 
     for i in range(1000):
-        # Find 4 random points to calculate a homography
+        # Find 4 feature (random) points to calculate a homography
         corr1 = corr[random.randrange(0, len(corr))]
         corr2 = corr[random.randrange(0, len(corr))]
         randomFour = np.vstack((corr1, corr2))
@@ -217,23 +159,26 @@ def ransac(corr, thresh):
         corr4 = corr[random.randrange(0, len(corr))]
         randomFour = np.vstack((randomFour, corr4))
 
-        #call the homography function on those points
+        # Compute homography
         H = find_homography(randomFour)
         inliers = []
 
+        # Compute inliers where ||pi’, H pi || <ε
         for i in range(len(corr)):
-            d = geometricDistance(corr[i], H)
+            d = least_squares(corr[i], H)
             if d < 5:
                 inliers.append(corr[i])
 
+        # Keep largest set of inliers
         if len(inliers) > len(max_inliers):
             max_inliers = inliers
             best_H = H
 
         print("Corr size: ", len(corr), " NumInliers: ", len(inliers), "Max inliers: ", len(max_inliers))
 
-        if len(max_inliers) > (len(corr)*thresh):
+        if len(max_inliers) > (len(corr) * thresh):
             break
+
     return best_H, max_inliers
 
 
@@ -265,7 +210,7 @@ def find_homography(correspondences):
 
 
 # Calculate the geometric distance between estimated points and original points
-def geometricDistance(correspondence, h):
+def least_squares(correspondence, h):
     p1 = np.transpose(np.matrix([correspondence[0].item(0), correspondence[0].item(1), 1]))
     estimatep2 = np.dot(h, p1)
     estimatep2 = (1 / estimatep2.item(2)) * estimatep2
