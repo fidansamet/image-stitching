@@ -34,7 +34,7 @@ def main():
             ground_truth = cv2.imread(dataset_name + "/" + subset_name + '_gt.png')
 
             # Feature extraction, feature matching, Homography finding, merging by transformation
-            stitch_images(cur_image_gray, next_image_gray, feature_points_plot, feature_matching_plot)
+            stitch_images(cur_image, next_image, feature_points_plot, feature_matching_plot)
 
         # result_image = np.concatenate((feature_points_plot, cv2.cvtColor(feature_matching_plot, cv2.COLOR_BGR2RGB)), axis=0)
         # plt.imshow(feature_points_plot)
@@ -135,9 +135,10 @@ def stitch_images(cur_image, next_image, feature_points_plot, feature_matching_p
         print("Final inliers count: ", len(inliers))
 
         dst = cv2.warpPerspective(next_image, H, (cur_image.shape[1] + next_image.shape[1], cur_image.shape[0]))
-        dst[0:cur_image.shape[0], 0:cur_image.shape[1]] = cur_image
-        plt.imshow(dst)
-        plt.show()
+        align_images(cur_image, next_image, H)
+        # dst[0:cur_image.shape[0], 0:cur_image.shape[1]] = cur_image
+        # plt.imshow(dst)
+        # plt.show()
         stitched = dst
     else:
         print("Can’t find enough keypoints.")
@@ -149,7 +150,7 @@ def ransac(corr, thresh):
     max_inliers = []
     best_H = None
 
-    for i in range(1000):
+    for i in range(100):
         # Find 4 feature (random) points to calculate a homography
         corr1 = corr[random.randrange(0, len(corr))]
         corr2 = corr[random.randrange(0, len(corr))]
@@ -218,6 +219,45 @@ def least_squares(correspondence, h):
     p2 = np.transpose(np.matrix([correspondence[0].item(2), correspondence[0].item(3), 1]))
     error = p2 - estimatep2
     return np.linalg.norm(error)
+
+
+def to_mtx(img):
+    H, V, C = img.shape
+    mtr = np.zeros((V, H, C), dtype='int')
+    for i in range(img.shape[0]):
+        mtr[:, i] = img[i]
+
+    return mtr
+
+
+def to_img(mtr):
+    V, H, C = mtr.shape
+    img = np.zeros((H, V, C), dtype='int')
+    for i in range(mtr.shape[0]):
+        img[:, i] = mtr[i]
+
+    return img
+
+
+def align_images(cur_image, next_image, H):
+    mtr = to_mtx(next_image)
+    R, C = (cur_image.shape[1] + next_image.shape[1], cur_image.shape[0])
+    dst = np.zeros((R, C, mtr.shape[2]))
+    for i in range(mtr.shape[0]):
+        for j in range(mtr.shape[1]):
+            res = np.dot(H, [i, j, 1])
+            i2 = int(res[0, 0] / res[0, 2] + 0.5)
+            j2 = int(res[0, 1] / res[0, 2] + 0.5)
+            if i2 >= 0 and i2 < R:
+                if j2 >= 0 and j2 < C:
+                    dst[i2, j2] = mtr[i, j]
+
+    a = to_img(dst)
+    plt.imshow(a)
+    plt.show()
+    a[0:cur_image.shape[0], 0:cur_image.shape[1]] = cur_image
+    plt.imshow(a)
+    plt.show()
 
 
 if __name__ == '__main__':
