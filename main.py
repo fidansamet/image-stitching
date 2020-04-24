@@ -4,21 +4,20 @@ from matplotlib import pyplot as plt
 import numpy as np
 import random
 
-dataset_name = "HW2_Dataset"
-subsets = {}
-orb = cv2.ORB_create()  # Initiate ORB detector
 plt.style.use("ggplot")
-plt.title(''), plt.xticks([]), plt.yticks([])
+DATASET_NAME = "HW2_Dataset"
+ORB = cv2.ORB_create()  # Initiate ORB detector
 # each element needs to have 2-nearest neighbors, each list of descriptors needs to have more than 2 elements each
-nearest_neighbor_num = 2    # TODO
-ransac_thresh = 2
-inlier_thresh = 2
+NEAREST_NEIGHBOR_NUM = 2
+RANSAC_THRESH = 2
+INLIER_THRESH = 2
+subsets = {}
 
 
 def get_subset_names():
-    root, directories, files = next(os.walk(dataset_name))
+    root, directories, files = next(os.walk(DATASET_NAME))
     for directory in sorted(directories):
-        subsets[directory] = sorted(os.listdir(dataset_name + "/" + directory))
+        subsets[directory] = sorted(os.listdir(DATASET_NAME + "/" + directory))
 
 
 def main():
@@ -26,111 +25,49 @@ def main():
         feature_points_plot = None
         homographies = []
         H = None
-        panorama = cv2.imread(dataset_name + "/" + subset_name + '/' + subset_images_names[0])
+        panorama = cv2.imread(DATASET_NAME + "/" + subset_name + '/' + subset_images_names[0])
         for i in range(0, len(subset_images_names) - 1):
             print(subset_images_names[i])
 
             # Read next images
-            next_image = cv2.imread(dataset_name + "/" + subset_name + '/' + subset_images_names[i + 1])
+            next_image = cv2.imread(DATASET_NAME + "/" + subset_name + '/' + subset_images_names[i + 1])
             # next_image = cv2.GaussianBlur(next_image, (3,3),0)
             next_image_gray = cv2.cvtColor(next_image, cv2.COLOR_BGR2GRAY)
             # next_image_gray = cv2.GaussianBlur(next_image_gray, (3,3),0)
 
             # Current image is the panorama
-            cur_image = cv2.imread(dataset_name + "/" + subset_name + '/' + subset_images_names[i])
+            cur_image = cv2.imread(DATASET_NAME + "/" + subset_name + '/' + subset_images_names[i])
             # cur_image = cv2.GaussianBlur(cur_image, (3,3),0)
             cur_image_gray = cv2.cvtColor(cur_image, cv2.COLOR_BGR2GRAY)
             # cur_image_gray = cv2.GaussianBlur(cur_image_gray, (3,3),0)
 
-            # Feature extraction, feature matching, Homography finding, merging by transformation
+            # Feature extraction, feature matching, Homography finding
             homographies = stitch_images(cur_image, cur_image_gray, next_image, next_image_gray, feature_points_plot, homographies)
 
-
-            # img_ = cv2.imread(dataset_name + "/" + subset_name + '/' + subset_images_names[i + 1])
-            # img1 = cv2.cvtColor(img_, cv2.COLOR_BGR2GRAY)
-            # img = cv2.imread(dataset_name + "/" + subset_name + '/' + subset_images_names[i])
-            # img2 = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            # # find key points
-            # kp1, des1 = orb.detectAndCompute(img1, None)
-            # kp2, des2 = orb.detectAndCompute(img2, None)
-            #
-            #
-            # match = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
-            #
-            # matches = match.knnMatch(des1, des2, k=2)
-            # good = []
-            # for m, n in matches:
-            #     if m.distance < 0.75 * n.distance:
-            #         good.append(m)
-            # draw_params = dict(matchColor=(0, 255, 0),
-            #                    singlePointColor=None,
-            #                    flags=2)
-            # img3 = cv2.drawMatches(img_, kp1, img, kp2, good, None, **draw_params)
-            # # cv2.imshow("original_image_drawMatches.jpg", img3)
-            #
-            # MIN_MATCH_COUNT = 10
-            # if len(good) > MIN_MATCH_COUNT:
-            #     match_pairs_list = []
-            #     if good is not None or good is not []:
-            #         for match in good:
-            #             (x1, y1) = kp1[match.queryIdx].pt
-            #             (x2, y2) = kp2[match.trainIdx].pt
-            #             match_pairs_list.append([x1, y1, x2, y2])
-            #
-            #     match_pairs_matrix = np.matrix(match_pairs_list)
-            #
-            #     # Run RANSAC algorithm
-            #     M, inliers = RANSAC(match_pairs_matrix, ransac_thresh)
-            #     homographies.append(M)
-            #
-            #     res = merge_images(img, img_, M)
-            #
-            #     plt.imshow(res)
-            #     plt.show()
-            #     # panorama = trim(dst)
-            # else:
-            #     print("Not enought matches are found - %d/%d", (len(good) / MIN_MATCH_COUNT))
-            # cv2.imsave("original_image_stitched_crop.jpg", trim(dst))
-
-
-
-
+        # Merging by transformation
         for i in range(0, len(subset_images_names) - 1):
             print(subset_images_names[i])
 
-            img_ = cv2.imread(dataset_name + "/" + subset_name + '/' + subset_images_names[i + 1])
-            img = panorama
+            next_image = cv2.imread(DATASET_NAME + "/" + subset_name + '/' + subset_images_names[i + 1])
+            cur_image = panorama
 
             if H is None:
                 H = homographies[0]
             else:
                 H = np.matmul(H, homographies[i])
 
-            res = merge_images(img, img_, H)
-
-            # h, w = img1.shape
-            # pts = np.float32([[0, 0], [0, h - 1], [w - 1, h - 1], [w - 1, 0]]).reshape(-1, 1, 2)
-            # dst = cv2.perspectiveTransform(pts, H)
-            # img2 = cv2.polylines(img2, [np.int32(dst)], True, 255, 3, cv2.LINE_AA)
-            # # cv2.imshow("original_image_overlapping.jpg", img2)
-            # dst = cv2.warpPerspective(img_, H, (img.shape[1] + img_.shape[1], img.shape[0]))
-            # dst[0:img.shape[0], 0:img.shape[1]] = img
-
-            plt.imshow(res)
+            panorama = merge_images(cur_image, next_image, H)
+            plt.imshow(panorama)
             plt.show()
-            panorama = res
 
-
+        panorama = cv2.medianBlur(panorama, 3)
+        plt.imshow(panorama)
+        plt.title('Panorama'), plt.xticks([]), plt.yticks([]), plt.show()
 
         # Read ground truth panorama image
-        ground_truth = cv2.imread(dataset_name + "/" + subset_name + '_gt.png')
-        panorama = cv2.medianBlur(panorama, 5)
-        plt.imshow(panorama)
-        plt.title('Panorama'), plt.xticks([]), plt.yticks([])
-        plt.show()
+        ground_truth = cv2.imread(DATASET_NAME + "/" + subset_name + '_gt.png')
         plt.imshow(ground_truth)
-        plt.title('Panorama Ground Truth'), plt.xticks([]), plt.yticks([])
-        plt.show()
+        plt.title('Panorama Ground Truth'), plt.xticks([]), plt.yticks([]), plt.show()
 
 
 def stitch_images(cur_image, cur_image_gray, next_image, next_image_gray, feature_points_plot, homographies):
@@ -141,20 +78,6 @@ def stitch_images(cur_image, cur_image_gray, next_image, next_image_gray, featur
 
     # Feature matching
     matches = feature_matching(cur_image, cur_feature_pts, cur_descs, next_image, next_feature_pts, next_descs)
-
-    # MIN_MATCH_COUNT = 10
-    # if len(good) > MIN_MATCH_COUNT:
-    #     match_pairs_list = []
-    #     if good is not None or good is not []:
-    #         for match in good:
-    #             (x1, y1) = kp1[match.queryIdx].pt
-    #             (x2, y2) = kp2[match.trainIdx].pt
-    #             match_pairs_list.append([x1, y1, x2, y2])
-    #
-    #     match_pairs_matrix = np.matrix(match_pairs_list)
-    # else:
-    # print("Not enought matches are found - %d/%d", (len(good) / MIN_MATCH_COUNT))
-
 
     # Find Homography matrix
     if len(matches[:, 0]) >= 4:
@@ -168,45 +91,20 @@ def stitch_images(cur_image, cur_image_gray, next_image, next_image_gray, featur
         match_pairs_matrix = np.matrix(match_pairs_list)
 
         # Run RANSAC algorithm
-        H, inliers = RANSAC(match_pairs_matrix, ransac_thresh)
+        H = RANSAC(match_pairs_matrix, RANSAC_THRESH)
 
         homographies.append(H)
-
-        # src_pts = np.float32([next_feature_pts[m.queryIdx].pt for m in matches[:, 0]]).reshape(-1, 1, 2)
-        # dst_pts = np.float32([cur_feature_pts[m.trainIdx].pt for m in matches[:, 0]]).reshape(-1, 1, 2)
-
-        # H, mask = cv2.findHomography(dst_pts, src_pts, cv2.RANSAC, 5.0)
-
-        # src_pts = np.float32([kp1[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
-        # dst_pts = np.float32([kp2[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
-        # M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
-
         print("Final homography: ", H)
-        print("Final inliers count: ", len(inliers))
-
-        # res = cv2.warpPerspective(next_image, H, (cur_image.shape[1], cur_image.shape[0]))
-        # res[0:cur_image.shape[0], 0:cur_image.shape[1]] = cur_image
-        # plt.imshow(res)
-        # plt.title('Feature Points'), plt.xticks([]), plt.yticks([])
-        # plt.show()
-
-        # Merging by Transformation
-        # res = merge_images(cur_image, next_image, H)
-        # plt.imshow(res)
-        # plt.title('Feature Points'), plt.xticks([]), plt.yticks([])
-        # plt.show()
-
 
     else:
         print("Can’t find enough keypoints.")
-        res = next_image
 
     return homographies
 
 
 def feature_extraction(img, img_gray, feature_points_plot):
     # Feature extraction: find the key points, compute the descriptors with ORB
-    key_pts, descs = orb.detectAndCompute(img_gray, None)
+    key_pts, descs = ORB.detectAndCompute(img_gray, None)
     # Plots showing feature points for each ordered pair of sub-image
     drawn_key_pts = cv2.drawKeypoints(img, key_pts, None, color=(0, 255, 0), flags=0)
 
@@ -226,8 +124,6 @@ def feature_extraction(img, img_gray, feature_points_plot):
 
 def feature_matching(cur_image, cur_feature_pts, cur_descs, next_image, next_feature_pts, next_descs):
 
-    # search_params = dict(checks = 50)
-
     # Matcher
     bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
 
@@ -239,16 +135,11 @@ def feature_matching(cur_image, cur_feature_pts, cur_descs, next_image, next_fea
     flann = cv2.FlannBasedMatcher(index_params, search_params)
 
 
-    if (cur_descs is not None and len(cur_descs) > nearest_neighbor_num and
-            next_descs is not None and len(next_descs) > nearest_neighbor_num):
+    if (cur_descs is not None and len(cur_descs) > NEAREST_NEIGHBOR_NUM and
+            next_descs is not None and len(next_descs) > NEAREST_NEIGHBOR_NUM):
 
         # Get knn detector
-        matches = flann.knnMatch(next_descs, cur_descs, k=nearest_neighbor_num)
-
-
-        draw_params = dict(matchColor=(0, 255, 0),
-                           singlePointColor=None,
-                           flags=2)
+        matches = flann.knnMatch(next_descs, cur_descs, k=NEAREST_NEIGHBOR_NUM)
 
         # Apply ratio test
         good_matches = []
@@ -258,7 +149,6 @@ def feature_matching(cur_image, cur_feature_pts, cur_descs, next_image, next_fea
         matches = np.asarray(good_matches)
 
         # cv2.drawMatchesKnn expects list of lists as matches.
-        # img3 = cv2.drawMatches(img_, kp1, img, kp2, good, None, **draw_params)
         drawn_matches = cv2.drawMatchesKnn(cur_image, cur_feature_pts, next_image, next_feature_pts, good_matches, None, flags=2)    # TODO flag?
         plt.imshow(cv2.cvtColor(drawn_matches, cv2.COLOR_BGR2RGB))
         plt.title('Feature Point Matching Lines'), plt.xticks([]), plt.yticks([])
@@ -275,7 +165,7 @@ def feature_matching(cur_image, cur_feature_pts, cur_descs, next_image, next_fea
 
 def RANSAC(match_pairs, thresh):
 
-    max_inliers = []
+    max_inliers = 0
     best_H = None
 
     for i in range(100):
@@ -291,25 +181,25 @@ def RANSAC(match_pairs, thresh):
 
         # Compute homography
         H = find_homography(randomFour)
-        inliers = []
+        inliers = 0
 
         # Compute inliers where ||pi’, H pi || <ε
         for i in range(len(match_pairs)):
             d = least_squares(match_pairs[i], H)
-            if d < inlier_thresh:
-                inliers.append(match_pairs[i])
+            if d < INLIER_THRESH:
+                inliers += 1
 
-        # Keep largest set of inliers
-        if len(inliers) > len(max_inliers):
+        # Update inlier number
+        if inliers > max_inliers:
             max_inliers = inliers
             best_H = H
 
-        print("Corr size: ", len(match_pairs), " NumInliers: ", len(inliers), "Max inliers: ", len(max_inliers))
+        print("Corr size: ", len(match_pairs), " NumInliers: ", inliers, "Max inliers: ", max_inliers)
 
-        if len(max_inliers) > (len(match_pairs) * thresh):
+        if max_inliers > (len(match_pairs) * thresh):
             break
 
-    return best_H, max_inliers
+    return best_H
 
 
 def find_homography(matches):
@@ -370,16 +260,19 @@ def to_img(mtr):
     return img
 
 
+def get_points(im_size):
+
+    points = []
+    x_range = np.arange(im_size[1], dtype=int)
+    y_range = np.arange(im_size[0], dtype=int)
+    y, x = np.meshgrid(y_range, x_range)
+
+    points.append((y.flatten(), x.flatten()))
+
+    return points
+
 def merge_images(cur_image, next_image, H):
-    # h, w = img1.shape
-    # pts = np.float32([[0, 0], [0, h - 1], [w - 1, h - 1], [w - 1, 0]]).reshape(-1, 1, 2)
-    # dst = cv2.perspectiveTransform(pts, M)
-    # img2 = cv2.polylines(img2, [np.int32(dst)], True, 255, 3, cv2.LINE_AA)
-    # # cv2.imshow("original_image_overlapping.jpg", img2)
-    # dst = cv2.warpPerspective(img_, M, (img.shape[1] + img_.shape[1], img.shape[0]))
-    # dst[0:img.shape[0], 0:img.shape[1]] = img
-    # plt.imshow(dst)
-    # plt.show()
+
     mtr = to_mtx(next_image)
     R, C = (cur_image.shape[1] + next_image.shape[1], cur_image.shape[0])
     dst = np.zeros((R, C, mtr.shape[2]))
@@ -399,53 +292,52 @@ def merge_images(cur_image, next_image, H):
     plt.title(''), plt.xticks([]), plt.yticks([])
     plt.show()
 
-    for i in range(cur_image.shape[0]):
-        for j in range(cur_image.shape[1]):
-            if cur_image[i, j][0] != 0 and cur_image[i, j][1] != 0 and cur_image[i, j][2] != 0:
-                a[i, j] = cur_image[i, j]
+    # for i in range(cur_image.shape[0]):
+    #     for j in range(cur_image.shape[1]):
+    #         if cur_image[i, j][0] != 0 and cur_image[i, j][1] != 0 and cur_image[i, j][2] != 0:
+    #             a[i, j] = cur_image[i, j]
+
+    # a[0:cur_image.shape[0], 0:cur_image.shape[1]] = cur_image if cur_image[0] != 0 and cur_image[1] != 0 and
+    #             cur_image[2] != 0 else
 
     # a[0:cur_image.shape[0], 0:cur_image.shape[1]] = cur_image
-    a = trim(a)
+
+    non_black_mask = np.all(cur_image != [0, 0, 0], axis=-1)
+    cur_image_shape = cur_image.shape
+    a_shape = a.shape
+    empty_mask = np.zeros((a_shape[0], a_shape[1]), dtype=bool)
+    empty_mask[0:cur_image_shape[0], 0:cur_image_shape[1]] = non_black_mask
+
+    a[empty_mask, :] = cur_image[non_black_mask, :]
+
+    # itemindex = np.where(array == item)
+    #
+    # a[itemindex] = cur_image[itemindex]
+
+    # non_black_mask = np.all(cur_image == [0, 0, 0], axis=-1)
+
+
+    a = crop_image(a)
     plt.imshow(a)
     plt.show()
     return a
 
 
 def crop_image(img):
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    (_, mask) = cv2.threshold(gray, 1.0, 255.0, cv2.THRESH_BINARY)
+    # Crop top
+    if not np.sum(img[0]):
+        return crop_image(img[1:])
+    # Crop bottom
+    elif not np.sum(img[-1]):
+        return crop_image(img[:-2])
+    # Crop left
+    elif not np.sum(img[:, 0]):
+        return crop_image(img[:, 1:])
+    # Crop right
+    elif not np.sum(img[:, -1]):
+        return crop_image(img[:, :-2])
 
-    # findContours destroys input
-    temp = mask.copy()
-    (contours, _) = cv2.findContours(temp, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # sort contours by largest first (if there are more than one)
-    contours = sorted(contours, key=lambda contour: len(contour), reverse=True)
-    roi = cv2.boundingRect(contours[0])
-
-    # use the roi to select into the original 'stitched' image
-    a = img[roi[1]:roi[3], roi[0]:roi[2]]
-
-    plt.imshow(a)
-    plt.show()
-    return a
-
-
-def trim(frame):
-    #crop top
-    if not np.sum(frame[0]):
-        return trim(frame[1:])
-    #crop bottom
-    elif not np.sum(frame[-1]):
-        return trim(frame[:-2])
-    #crop left
-    elif not np.sum(frame[:,0]):
-        return trim(frame[:,1:])
-    #crop right
-    elif not np.sum(frame[:,-1]):
-        return trim(frame[:,:-2])
-
-    return frame
+    return img
 
 
 if __name__ == '__main__':
