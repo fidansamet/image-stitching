@@ -26,7 +26,7 @@ def main():
         homographies = []
         H = None
         panorama = cv2.imread(DATASET_NAME + "/" + subset_name + '/' + subset_images_names[0])
-        for i in range(0, len(subset_images_names) - 1):
+        for i in range(0, 2):
             print(subset_images_names[i])
 
             # Read next images
@@ -42,10 +42,13 @@ def main():
             # cur_image_gray = cv2.GaussianBlur(cur_image_gray, (3,3),0)
 
             # Feature extraction, feature matching, Homography finding
-            homographies = stitch_images(cur_image, cur_image_gray, next_image, next_image_gray, feature_points_plot, homographies)
+            homography_matrix = stitch_images(cur_image, cur_image_gray, next_image, next_image_gray, feature_points_plot)
+
+            if homography_matrix is not None:
+                homographies.append(homography_matrix)
 
         # Merging by transformation
-        for i in range(0, len(subset_images_names) - 1):
+        for i in range(0, 2):
             print(subset_images_names[i])
 
             next_image = cv2.imread(DATASET_NAME + "/" + subset_name + '/' + subset_images_names[i + 1])
@@ -70,7 +73,7 @@ def main():
         plt.title('Panorama Ground Truth'), plt.xticks([]), plt.yticks([]), plt.show()
 
 
-def stitch_images(cur_image, cur_image_gray, next_image, next_image_gray, feature_points_plot, homographies):
+def stitch_images(cur_image, cur_image_gray, next_image, next_image_gray, feature_points_plot):
 
     # Feature extraction
     cur_feature_pts, cur_descs, feature_points_plot = feature_extraction(cur_image, cur_image_gray, feature_points_plot)
@@ -92,14 +95,12 @@ def stitch_images(cur_image, cur_image_gray, next_image, next_image_gray, featur
 
         # Run RANSAC algorithm
         H = RANSAC(match_pairs_matrix, RANSAC_THRESH)
-
-        homographies.append(H)
         print("Final homography: ", H)
+        return H
 
     else:
         print("Can’t find enough keypoints.")
-
-    return homographies
+        return None
 
 
 def feature_extraction(img, img_gray, feature_points_plot):
@@ -202,17 +203,19 @@ def RANSAC(match_pairs, thresh):
     return best_H
 
 
-def find_homography(matches):
+def find_homography(match_pairs):
     # loop through correspondences and create assemble matrix
     aList = []
-    for corr in matches:
-        p1 = np.matrix([corr.item(0), corr.item(1), 1])
-        p2 = np.matrix([corr.item(2), corr.item(3), 1])
+    for pair in match_pairs:
+        p1 = np.matrix([pair.item(0), pair.item(1), 1])
+        p2 = np.matrix([pair.item(2), pair.item(3), 1])
 
-        a2 = [0, 0, 0, -p2.item(2) * p1.item(0), -p2.item(2) * p1.item(1), -p2.item(2) * p1.item(2),
+        a2 = [0, 0, 0,
+              -p2.item(2) * p1.item(0), -p2.item(2) * p1.item(1), -p2.item(2) * p1.item(2),
               p2.item(1) * p1.item(0), p2.item(1) * p1.item(1), p2.item(1) * p1.item(2)]
 
-        a1 = [-p2.item(2) * p1.item(0), -p2.item(2) * p1.item(1), -p2.item(2) * p1.item(2), 0, 0, 0,
+        a1 = [-p2.item(2) * p1.item(0), -p2.item(2) * p1.item(1), -p2.item(2) * p1.item(2),
+              0, 0, 0,
               p2.item(0) * p1.item(0), p2.item(0) * p1.item(1), p2.item(0) * p1.item(2)]
 
         aList.append(a1)
@@ -242,21 +245,26 @@ def least_squares(match_pairs, h):
     return np.linalg.norm(error)
 
 
-def to_mtx(img):
-    H, V, C = img.shape
-    mtr = np.zeros((V, H, C), dtype='uint8')
-    for i in range(img.shape[0]):
-        mtr[:, i] = img[i]
+def image_to_matrix(image):
+    #H, V, C = image.shape
+    #matrix = np.zeros((V, H, C), dtype='uint8')
+    # for i in range(image.shape[0]):     # TODO
+    #     matrix[:, i] = image[i]
 
-    return mtr
+    matrix = np.transpose(image.copy(), (1, 0, 2))
+        
+    # matrix[:, 0:image.shape[0]] = image
+    return matrix
 
 
-def to_img(mtr):
-    V, H, C = mtr.shape
-    img = np.zeros((H, V, C), dtype='uint8')
-    for i in range(mtr.shape[0]):
-        img[:, i] = mtr[i]
+def matrix_to_image(mtr):
+    #V, H, C = mtr.shape
+    #img = np.zeros((H, V, C), dtype='uint8')
+   # for i in range(mtr.shape[0]):       # TODO
+    #    img[:, i] = mtr[i]
+    # matrix[:, 0:image.shape[0]] = image
 
+    img = np.transpose(mtr.copy(), (1, 0, 2)).astype('uint8')
     return img
 
 
@@ -269,75 +277,96 @@ def get_points(im_size):
 
     points.append((y.flatten(), x.flatten()))
 
-    return points
+    points = (np.asarray(points).squeeze(axis=0))
+
+    temp = np.ones( (3, points.shape[1]))
+    temp[:-1, :] = points
+    return temp
+
 
 def merge_images(cur_image, next_image, H):
 
-    mtr = to_mtx(next_image)
+    mtr = image_to_matrix(next_image)
     R, C = (cur_image.shape[1] + next_image.shape[1], cur_image.shape[0])
-    dst = np.zeros((R, C, mtr.shape[2]))
+    transformed_matrix = np.zeros((R, C, mtr.shape[2]))
+
+    points = get_points(mtr.shape)
+    dot_product = np.dot(H, points)
+    i_match = (dot_product[0, :] / dot_product[2, :] + 0.5).astype(int)
+    j_match = (dot_product[1, :] / dot_product[2, :] + 0.5).astype(int)
+    i_match = np.asarray(i_match).reshape(-1)
+    j_match = np.asarray(j_match).reshape(-1)
+
+
+    # nn = i_match > 0 and i_match < R
+
+    # ji_cond = (i_match >= 0) & (i_match < R)
+    # j_cond = (j_match >= 0) & (j_match < C)
+
+
+    # if 0 <= i2 < R and 0 <= j2 < C:
+    #       transformed_matrix[i2, j2] = mtr[i, j]
+
+    x, y = 0, 0
+    # for j in j_match:
+    #     for i in i_match:
+    #         if 0 <= i < C and 0 <= j < R:
+    #             transformed_matrix[i, j] = mtr[x, y]
+    #
+    #         if y >= mtr.shape[1] - 1:
+    #             break
+    #         y += 1
+    #     if x >= mtr.shape[0] - 1:
+    #         break
+    #     x += 1
 
     for i in range(mtr.shape[0]):
         for j in range(mtr.shape[1]):
             res = np.dot(H, [i, j, 1])
             i2 = int(res[0, 0] / res[0, 2] + 0.5)
             j2 = int(res[0, 1] / res[0, 2] + 0.5)
-            if i2 >= 0 and i2 < R:
-                if j2 >= 0 and j2 < C:
-                    dst[i2, j2] = mtr[i, j]
 
-    a = to_img(dst)
-    # a = cv2.medianBlur(a, 5)
-    plt.imshow(a)
+            if 0 <= i2 < R and 0 <= j2 < C:
+                  transformed_matrix[i2, j2] = mtr[i, j]
+
+
+    transformed_next_image = matrix_to_image(transformed_matrix)
+    plt.imshow(transformed_next_image)
     plt.title(''), plt.xticks([]), plt.yticks([])
     plt.show()
 
-    # for i in range(cur_image.shape[0]):
-    #     for j in range(cur_image.shape[1]):
-    #         if cur_image[i, j][0] != 0 and cur_image[i, j][1] != 0 and cur_image[i, j][2] != 0:
-    #             a[i, j] = cur_image[i, j]
-
-    # a[0:cur_image.shape[0], 0:cur_image.shape[1]] = cur_image if cur_image[0] != 0 and cur_image[1] != 0 and
-    #             cur_image[2] != 0 else
-
-    # a[0:cur_image.shape[0], 0:cur_image.shape[1]] = cur_image
-
+    # Find non black pixels in current image and create empty mask
     non_black_mask = np.all(cur_image != [0, 0, 0], axis=-1)
-    cur_image_shape = cur_image.shape
-    a_shape = a.shape
-    empty_mask = np.zeros((a_shape[0], a_shape[1]), dtype=bool)
-    empty_mask[0:cur_image_shape[0], 0:cur_image_shape[1]] = non_black_mask
+    empty_mask = np.zeros((transformed_next_image.shape[0], transformed_next_image.shape[1]), dtype=bool)
+    empty_mask[0:cur_image.shape[0], 0:cur_image.shape[1]] = non_black_mask
 
-    a[empty_mask, :] = cur_image[non_black_mask, :]
-
-    # itemindex = np.where(array == item)
-    #
-    # a[itemindex] = cur_image[itemindex]
-
-    # non_black_mask = np.all(cur_image == [0, 0, 0], axis=-1)
-
-
-    a = crop_image(a)
-    plt.imshow(a)
+    # Assign non black pixels of current image to transformed next image
+    transformed_next_image[empty_mask, :] = cur_image[non_black_mask, :]
+    transformed_next_image = crop_image(transformed_next_image)
+    plt.imshow(transformed_next_image)
     plt.show()
-    return a
+    return transformed_next_image
 
 
-def crop_image(img):
+def crop_image(image):
+
     # Crop top
-    if not np.sum(img[0]):
-        return crop_image(img[1:])
-    # Crop bottom
-    elif not np.sum(img[-1]):
-        return crop_image(img[:-2])
-    # Crop left
-    elif not np.sum(img[:, 0]):
-        return crop_image(img[:, 1:])
-    # Crop right
-    elif not np.sum(img[:, -1]):
-        return crop_image(img[:, :-2])
+    if not np.sum(image[0]):
+        return crop_image(image[1:])
 
-    return img
+    # Crop bottom
+    elif not np.sum(image[-1]):
+        return crop_image(image[:-2])
+
+    # Crop left
+    elif not np.sum(image[:, 0]):
+        return crop_image(image[:, 1:])
+
+    # Crop right
+    elif not np.sum(image[:, -1]):
+        return crop_image(image[:, :-2])
+
+    return image
 
 
 if __name__ == '__main__':
