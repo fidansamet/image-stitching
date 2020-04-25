@@ -5,20 +5,18 @@ import numpy as np
 import random
 
 plt.style.use("ggplot")
-DATASET_NAME = "panorama7"
+DATASET_NAME = "HW2_Dataset"
 SURF = cv2.xfeatures2d.SURF_create()
-# each element needs to have 2-nearest neighbors, each list of descriptors needs to have more than 2 elements each
 NEAREST_NEIGHBOR_NUM = 2
 RANSAC_THRESH = 2
 INLIER_THRESH = 2
 RANSAC_ITERATION = 1000
 subsets = {}
-FLANN_INDEX_KDTREE = 0
-index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
-search_params = dict(checks=100)   # or pass empty dictionary
-# Matcher
-bf = cv2.BFMatcher()
-flann = cv2.FlannBasedMatcher(index_params, search_params)
+index_params = dict(algorithm = 0, trees = 5)
+search_params = dict(checks=100)
+# Matchers
+brute_force_matcher = cv2.BFMatcher()
+flann_matcher = cv2.FlannBasedMatcher(index_params, search_params)
 
 
 def get_subset_names():
@@ -41,13 +39,13 @@ def main():
             next_image = cv2.imread(DATASET_NAME + "/" + subset_name + '/' + subset_images_names[i + 1])
             # next_image = cv2.GaussianBlur(next_image, (3,3),0)
             next_image_gray = cv2.cvtColor(next_image, cv2.COLOR_BGR2GRAY)
-            # next_image_gray = cv2.GaussianBlur(next_image_gray, (3,3),0)
+            next_image_gray = cv2.GaussianBlur(next_image_gray, (3,3), 0)
 
             # Current image is the panorama
             cur_image = cv2.imread(DATASET_NAME + "/" + subset_name + '/' + subset_images_names[i])
             # cur_image = cv2.GaussianBlur(cur_image, (3,3),0)
             cur_image_gray = cv2.cvtColor(cur_image, cv2.COLOR_BGR2GRAY)
-            # cur_image_gray = cv2.GaussianBlur(cur_image_gray, (3,3),0)
+            cur_image_gray = cv2.GaussianBlur(cur_image_gray, (3,3), 0)
 
             # Feature extraction, feature matching, Homography finding
             homography_matrix = stitch_images(cur_image, cur_image_gray, next_image, next_image_gray, feature_points_plot)
@@ -95,7 +93,7 @@ def stitch_images(cur_image, cur_image_gray, next_image, next_image_gray, featur
     matches = feature_matching(cur_image, cur_feature_pts, cur_descs, next_image, next_feature_pts, next_descs)
 
     # Find Homography matrix
-    if matches is not None and matches is not [] and len(matches[:, 0]) >= 4:
+    if matches is not None and matches.size != 0 and len(matches[:, 0]) >= 4:
         match_pairs_list = []
         for match in matches[:, 0]:
             (x1, y1) = next_feature_pts[match.queryIdx].pt
@@ -106,11 +104,11 @@ def stitch_images(cur_image, cur_image_gray, next_image, next_image_gray, featur
 
         # Run RANSAC algorithm
         H = RANSAC(match_pairs_matrix)
-        print("Final homography: ", H)
+        print("Homography: ", H)
         return H
 
     else:
-        print("Can’t find enough keypoints.")
+        print("Can not find enough key points.")
         return None
 
 
@@ -118,7 +116,7 @@ def feature_extraction(img, img_gray, feature_points_plot):
     # Feature extraction: find the key points, compute the descriptors with SURF
     key_pts, descs = SURF.detectAndCompute(img_gray, None)
     # Plots showing feature points for each ordered pair of sub-image
-    drawn_key_pts = cv2.drawKeypoints(img, key_pts, None, color=(0, 255, 0), flags=0)
+    drawn_key_pts = cv2.drawKeypoints(img, key_pts, None, color=(0, 255, 0), flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
     if feature_points_plot is None:
         # Assign first image's feature points
@@ -140,7 +138,7 @@ def feature_matching(cur_image, cur_feature_pts, cur_descs, next_image, next_fea
             next_descs is not None and len(next_descs) > NEAREST_NEIGHBOR_NUM):
 
         # Get knn detector
-        matches = flann.knnMatch(next_descs, cur_descs, k=NEAREST_NEIGHBOR_NUM)
+        matches = flann_matcher.knnMatch(next_descs, cur_descs, k=NEAREST_NEIGHBOR_NUM)
 
         # Apply ratio test
         good_matches = []
@@ -148,7 +146,7 @@ def feature_matching(cur_image, cur_feature_pts, cur_descs, next_image, next_fea
         for i, pair in enumerate(matches):
             try:
                 m, n = pair
-                if m.distance < 0.3 * n.distance:
+                if m.distance < 0.6 * n.distance:
                     good_matches.append([m])
 
             except ValueError:
@@ -157,14 +155,14 @@ def feature_matching(cur_image, cur_feature_pts, cur_descs, next_image, next_fea
         matches = np.asarray(good_matches)
 
         # cv2.drawMatchesKnn expects list of lists as matches.
-        drawn_matches = cv2.drawMatchesKnn(cur_image, cur_feature_pts, next_image, next_feature_pts, good_matches, None, flags=2)    # TODO flag?
+        drawn_matches = cv2.drawMatchesKnn(cur_image, cur_feature_pts, next_image, next_feature_pts, good_matches, None, flags=2)
         plt.imshow(cv2.cvtColor(drawn_matches, cv2.COLOR_BGR2RGB))
         plt.title('Feature Point Matching Lines'), plt.xticks([]), plt.yticks([])
         plt.show()
         return matches
 
     else:
-        plt.imshow(cv2.cvtColor(next_image, cv2.COLOR_BGR2RGB))
+        plt.imshow(cv2.cvtColor(np.concatenate((cur_image, next_image), axis=1), cv2.COLOR_BGR2RGB))
         plt.title('Feature Point Matching Lines'), plt.xticks([]), plt.yticks([])
         plt.show()
         return None
@@ -184,12 +182,12 @@ def RANSAC(match_pairs):
 
         # Get homography matrix
         H = find_homography(random_matches)
-        cur_inliers = 0
 
         # Compute inliers where ||pi’, H pi || <ε
+        cur_inliers = 0
         for i in range(len(match_pairs)):
-            d = get_geometric_distance(match_pairs[i], H)
-            if d < INLIER_THRESH:
+            geo_dist = get_geometric_distance(match_pairs[i], H)
+            if geo_dist < INLIER_THRESH:
                 cur_inliers += 1
 
         # Update maximum inlier number
@@ -202,37 +200,6 @@ def RANSAC(match_pairs):
             break
 
     return best_H
-
-
-# TODO
-def find_homography(match_pairs):
-    aList = []
-    for pair in match_pairs:
-        p1 = np.matrix([pair.item(0), pair.item(1), 1])
-        p2 = np.matrix([pair.item(2), pair.item(3), 1])
-        aList.append([0, 0, 0,
-              -p2.item(2) * p1.item(0), -p2.item(2) * p1.item(1), -p2.item(2) * p1.item(2),
-              p2.item(1) * p1.item(0), p2.item(1) * p1.item(1), p2.item(1) * p1.item(2)])
-
-        aList.append([-p2.item(2) * p1.item(0), -p2.item(2) * p1.item(1), -p2.item(2) * p1.item(2),
-              0, 0, 0,
-              p2.item(0) * p1.item(0), p2.item(0) * p1.item(1), p2.item(0) * p1.item(2)])
-
-    matrixA = np.matrix(aList)
-    u, s, v = np.linalg.svd(matrixA)
-    H = np.reshape(v[8], (3, 3))
-    H = (1 / H.item(8)) * H
-    return H
-
-
-# Calculate the geometric distance between estimated points and original points
-def get_geometric_distance(match_pairs, H):
-    estimated = np.dot(H, np.transpose(np.matrix([match_pairs[0].item(0), match_pairs[0].item(1), 1])))
-    # Eliminate division by zero and return inefficient d
-    if estimated.item(2) == 0:
-        return INLIER_THRESH + 1
-    err = np.transpose(np.matrix([match_pairs[0].item(2), match_pairs[0].item(3), 1])) - (1 / estimated.item(2)) * estimated
-    return np.linalg.norm(err)
 
 
 def merge_images(cur_image, next_image, H):
@@ -267,20 +234,50 @@ def merge_images(cur_image, next_image, H):
     return transformed_next_image
 
 
+def find_homography(match_pairs):
+    matrix_list = []
+    for pair in match_pairs:
+        p1 = np.matrix([pair.item(0), pair.item(1), 1])
+        p2 = np.matrix([pair.item(2), pair.item(3), 1])
+        matrix_list.append([0, 0, 0,
+              -p2.item(2) * p1.item(0), -p2.item(2) * p1.item(1), -p2.item(2) * p1.item(2),
+              p2.item(1) * p1.item(0), p2.item(1) * p1.item(1), p2.item(1) * p1.item(2)])
+
+        matrix_list.append([-p2.item(2) * p1.item(0), -p2.item(2) * p1.item(1), -p2.item(2) * p1.item(2),
+              0, 0, 0,
+              p2.item(0) * p1.item(0), p2.item(0) * p1.item(1), p2.item(0) * p1.item(2)])
+
+    matrixA = np.matrix(matrix_list)
+    u, s, vh = np.linalg.svd(matrixA)
+    H = np.reshape(vh[8], (3, 3))
+    H = (1 / H.item(8)) * H
+    return H
+
+
+# Calculate the geometric distance of matched points
+def get_geometric_distance(match_pairs, H):
+    estimated = np.dot(H, np.transpose(np.matrix([match_pairs[0].item(0), match_pairs[0].item(1), 1])))
+    # Eliminate division by zero and return inefficient d
+    if estimated.item(2) == 0:
+        return INLIER_THRESH + 1
+    err = np.transpose(np.matrix([match_pairs[0].item(2), match_pairs[0].item(3), 1])) - (1 / estimated.item(2)) * estimated
+    return np.linalg.norm(err)
+
+
 def crop_image(image):
-    # Crop top if top sum 0
+    # Crop top if black
     if not np.sum(image[0]):
         return crop_image(image[1:])
 
-    # Crop bottom if bottom sum 0
+    # Crop bottom if black
     elif not np.sum(image[-1]):
         return crop_image(image[:-2])
 
-    # Crop left if left sum 0
+    # Crop left if black
     elif not np.sum(image[:, 0]):
         return crop_image(image[:, 1:])
 
-    # Crop right if right sum 0
+    # Crop right if black
     elif not np.sum(image[:, -1]):
         return crop_image(image[:, :-2])
 
